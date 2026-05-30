@@ -1,0 +1,9 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/leijeoi/autocore/build/cmake_install.cmake",
+		"/home/leijeoi/autocore/build/service/logger/cmake_install.cmake",
+		"/home/leijeoi/autocore/build/app/can_service/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
