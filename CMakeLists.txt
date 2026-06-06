@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 project(AutoCore C)
 
+# 设置 C 标准（ARM GCC 4.9 默认 C90，需要 C99 以支持 for 循环内声明变量）
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
 # ============================================================
 # AutoCore — AUTOSAR-inspired in-vehicle gateway software
 #
