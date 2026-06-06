@@ -1,65 +1,83 @@
+/**
+ * @file main.c
+ * @brief CAN Service — Application SWC
+ *
+ * 符合 AUTOSAR 分层架构的应用层示例。
+ * 只通过 RTE 接口与底层通信，不直接引用任何 BSW 模块。
+ */
+
+#include "rte.h"
 #include <stdio.h>
 #include <unistd.h>
 
-#include "can_driver.h"
-#include "can_signal.h"
-#include "logger.h"
-#include "can_router.h"
+/* ==================== SWC 回调函数 ==================== */
 
-static void test_handler(const struct can_frame *frame)
+/** 发动机状态回调 */
+static void engine_status_callback(uint32_t can_id,
+                                    const uint8_t *data,
+                                    uint8_t len)
 {
-    printf("[DISPATCH] CAN ID = 0x%X\n", frame->can_id);
+    (void)data;
+    (void)len;
+    printf("[SWC] ENGINE_STATUS received (CAN ID 0x%X)\n", can_id);
+
+    /* 通过 RTE 读取最新的车辆数据 */
+    printf("[SWC]   engine_speed = %.2f rpm\n",   Rte_IRead_EngineSpeed());
+    printf("[SWC]   vehicle_speed = %.2f km/h\n", Rte_IRead_VehicleSpeed());
+    printf("[SWC]   engine_temp = %.2f °C\n",     Rte_IRead_EngineTemp());
 }
 
-static void engine_handler(const struct can_frame *frame)
+/** 车辆状态回调 */
+static void vehicle_status_callback(uint32_t can_id,
+                                     const uint8_t *data,
+                                     uint8_t len)
 {
-    printf("[ENGINE] frame received: 0x%X\n",
-           frame->can_id);
+    (void)data;
+    (void)len;
+    printf("[SWC] VEHICLE_STATUS received (CAN ID 0x%X)\n", can_id);
 }
 
-static void vehicle_handler(const struct can_frame *frame)
+/** 通用调试回调 */
+static void debug_handler_callback(uint32_t can_id,
+                                    const uint8_t *data,
+                                    uint8_t len)
 {
-    printf("[VEHICLE] frame received: 0x%X\n",
-           frame->can_id);
+    printf("[SWC] DEBUG: CAN ID 0x%X, len=%d\n", can_id, len);
+    for (uint8_t i = 0; i < len && i < 8; i++) {
+        printf("[SWC]   data[%d] = 0x%02X\n", i, data[i]);
+    }
 }
+
+/* ==================== 主函数 ==================== */
 
 int main(void)
 {
-    int fd = can_open("vcan0");
+    printf("===== AutoCore CAN Service =====\n\n");
 
-    if (fd < 0) {
+    /* Step 1: 初始化 RTE（内部封装了 CAN 设备打开 + 路由器初始化） */
+    if (Rte_Init() < 0) {
+        printf("[APP] ERROR: RTE initialization failed\n");
         return -1;
     }
 
-    can_router_init(fd);
+    /* Step 2: 通过 RTE 注册 SWC 回调 */
+    Rte_Call_RegisterRxCallback(0x100, engine_status_callback);
+    Rte_Call_RegisterRxCallback(0x200, vehicle_status_callback);
+    Rte_Call_RegisterRxCallback(0x123, debug_handler_callback);
 
-    struct can_frame tx_frame = {0};
+    /* Step 3: 通过 RTE 发送周期性 CAN 报文 */
+    uint8_t heartbeat_data[] = {0x01};
+    Rte_Call_SendCanFrame(0x700, heartbeat_data, 1);
 
-    tx_frame.can_id = 0x555;
-    tx_frame.can_dlc = 2;
-    tx_frame.data[0] = 0xAA;
-    tx_frame.data[1] = 0x55;
+    uint8_t tx_data[] = {0xAA, 0x55};
+    Rte_Call_SendCanFrame(0x555, tx_data, 2);
 
-    can_router_add_tx(1000, &tx_frame);
+    printf("[APP] CAN Service started, entering main loop...\n\n");
 
-    struct can_frame heartbeat = {0};
-
-    heartbeat.can_id = 0x700;
-    heartbeat.can_dlc = 1;
-    heartbeat.data[0] = 0x01;
-
-    can_router_add_tx(500, &heartbeat);
-
-    can_router_add_filter(0x123);
-    can_router_add_filter(0x555);
-
-    can_router_register(0x100, engine_handler);
-    can_router_register(0x200, vehicle_handler);
-    can_router_register(0x123, test_handler);
-
+    /* Step 4: 主循环 — 应用层只调用 Rte_Run() */
     while (1) {
-        can_router_poll();
-        usleep(1000);
+        Rte_Run();
+        usleep(1000);  /* 1ms 轮询间隔 */
     }
 
     return 0;
