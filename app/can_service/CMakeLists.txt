@@ -4,4 +4,5 @@ add_executable(can_service
 
 target_link_libraries(can_service
     logger
+    can_driver
 )
