@@ -3,6 +3,8 @@ add_executable(can_service
 )
 
 target_link_libraries(can_service
+    can_if
+    mcal_can
+    rte
     logger
-    can_driver
 )
