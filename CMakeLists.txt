@@ -27,6 +27,9 @@ add_subdirectory(bsw/mcal/can)
 # --- BSW: CAN Interface Layer ---
 add_subdirectory(bsw/can/can_if)
 
+# --- BSW: Diagnostic Stack ---
+add_subdirectory(bsw/diag/iso_tp)
+
 # --- RTE ---
 add_subdirectory(rte)
 
