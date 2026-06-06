@@ -29,6 +29,7 @@ add_subdirectory(bsw/can/can_if)
 
 # --- BSW: Diagnostic Stack ---
 add_subdirectory(bsw/diag/iso_tp)
+add_subdirectory(bsw/diag/uds)
 
 # --- RTE ---
 add_subdirectory(rte)
