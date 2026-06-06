@@ -4,7 +4,8 @@
  *
  * 整合所有应用 SWC 的主入口：
  *   1. CAN Service SWC  — CAN 报文收发和信号处理
- *   2. UDS Service SWC  — 诊断服务 (ISO 14229)
+ *   2. UDS Service SWC  — 诊断服务 (ISO 14229) via ISO-TP
+ *   3. DoIP Service      — 诊断服务 via TCP/IP (ISO 13400)
  *
  * 所有模块通过 RTE 接口通信，不直接操作 BSW。
  */
@@ -12,6 +13,7 @@
 #include "rte.h"
 #include "uds.h"
 #include "iso_tp.h"
+#include "doip.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -91,6 +93,23 @@ static int write_vehicle_data(uint16_t did, const uint8_t *data, uint16_t len)
     return 0;
 }
 
+/* ==================== DoIP UDS 回调 ==================== */
+
+/**
+ * DoIP 收到了 UDS 诊断消息时的回调
+ * 通过 TCP 来的诊断请求走这里
+ */
+static int doip_uds_handler(const uint8_t *req, uint16_t req_len,
+                             uint8_t *resp, uint16_t *resp_len)
+{
+    uds_response_t response;
+    uds_handle_request(req, req_len, &response);
+
+    memcpy(resp, response.data, response.len);
+    *resp_len = response.len;
+    return 0;
+}
+
 /* ==================== 主函数 ==================== */
 
 int main(void)
@@ -117,14 +136,20 @@ int main(void)
 
     /* ---- Step 4: 初始化 UDS ---- */
     uds_init(0x7E0, 0x7E8);       /* 标准 UDS 寻址 */
-
-    /* 注册外部 DID 回调，实现实时数据读取 */
     uds_register_read_callback(read_vehicle_data);
     uds_register_write_callback(write_vehicle_data);
 
+    /* ---- Step 5: 初始化 DoIP ---- */
+    doip_handle_t doip;
+    if (doip_init(&doip, "AUTOCORE123456789", 0x0E80) < 0) {
+        printf("[APP] WARNING: DoIP init failed (non-fatal)\n");
+    } else {
+        printf("[APP] DoIP listening on port 13400\n");
+    }
+
     printf("[APP] All SWCs initialized, entering main loop...\n\n");
 
-    /* ---- Step 5: 主循环 ---- */
+    /* ---- Step 6: 主循环 ---- */
     uint8_t uds_request_buf[4095];
     uint32_t rx_id;
 
@@ -132,18 +157,19 @@ int main(void)
         /* 驱动 RTE（底层 = can_router_poll + 调度器） */
         Rte_Run();
 
-        /* 检查 ISO-TP 是否有完整的诊断请求报文 */
+        /* --- 诊断入口 1: ISO-TP (CAN) --- */
         int len = isotp_receive(&rx_id, uds_request_buf,
                                  sizeof(uds_request_buf));
         if (len > 0) {
-            printf("[APP] UDS request received via ISO-TP\n");
+            printf("[APP] UDS request via ISO-TP\n");
 
             uds_response_t response;
             uds_handle_request(uds_request_buf, (uint16_t)len, &response);
-
-            /* 通过 ISO-TP 发送响应 */
             isotp_send(uds_get_response_id(), response.data, response.len);
         }
+
+        /* --- 诊断入口 2: DoIP (以太网) --- */
+        doip_poll(&doip, doip_uds_handler);
 
         usleep(1000);
     }

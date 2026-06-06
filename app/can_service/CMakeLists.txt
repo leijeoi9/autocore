@@ -6,5 +6,7 @@ target_link_libraries(can_service
     rte
     uds
     iso_tp
+    doip
+    socket_adapter
     logger
 )

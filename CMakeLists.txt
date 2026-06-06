@@ -31,6 +31,10 @@ add_subdirectory(bsw/can/can_if)
 add_subdirectory(bsw/diag/iso_tp)
 add_subdirectory(bsw/diag/uds)
 
+# --- BSW: TCP/IP Services ---
+add_subdirectory(bsw/tcp_ip/socket_adapter)
+add_subdirectory(bsw/tcp_ip/doip)
+
 # --- RTE ---
 add_subdirectory(rte)
 
