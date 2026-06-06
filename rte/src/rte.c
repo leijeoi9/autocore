@@ -24,8 +24,11 @@ int Rte_Init(void)
     /* Step 1: 打开 CAN 设备（MCAL 层） */
     rte_can_fd = can_open(rte_can_ifname);
     if (rte_can_fd < 0) {
-        printf("[RTE] ERROR: can_open(%s) failed\n", rte_can_ifname);
-        return -1;
+        printf("[RTE] WARN: can_open(%s) failed — CAN disabled, other services (DoIP) still available\n", rte_can_ifname);
+        /* 不返回错误，让 RTE 继续初始化，DoIP 等其他服务仍可用 */
+        rte_can_fd = -1;
+        printf("[RTE] RTE initialized (CAN unavailable)\n");
+        return 0;
     }
     printf("[RTE] CAN interface '%s' opened (fd=%d)\n",
            rte_can_ifname, rte_can_fd);
