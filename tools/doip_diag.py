@@ -22,15 +22,15 @@ import sys
 import argparse
 
 # ==================== DoIP 协议常量 ====================
-DOIP_PROTOCOL_VERSION = 0x03
-DOIP_INVERSE_VERSION  = 0xFC
+DOIP_PROTOCOL_VERSION = 0x02
+DOIP_INVERSE_VERSION  = 0xFD
 
 # DoIP 负载类型
 DOIP_GENERIC_DOIP_NACK           = 0x0000
 DOIP_VEHICLE_ID_REQUEST          = 0x0001
 DOIP_VEHICLE_ID_RESPONSE         = 0x0002
-DOIP_ROUTING_ACTIVATION_REQUEST  = 0x0005
-DOIP_ROUTING_ACTIVATION_RESPONSE = 0x0006
+DOIP_ROUTING_ACTIVATION_REQUEST  = 0x0007
+DOIP_ROUTING_ACTIVATION_RESPONSE = 0x0008
 DOIP_DIAGNOSTIC_MESSAGE          = 0x8001
 DOIP_DIAGNOSTIC_MESSAGE_ACK      = 0x8002
 
@@ -123,7 +123,7 @@ class DoIPClient:
     def routing_activate(self, source_addr=TESTER_LOGICAL_ADDRESS,
                          target_addr=AUTOCORE_LOGICAL_ADDRESS):
         """路由激活"""
-        payload = struct.pack("!HBBBBB", source_addr, 0x01, 0x00, 0x00, 0x00, 0x00)
+        payload = struct.pack("!HBBBBBB", source_addr, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00)
         self._send_doip(DOIP_ROUTING_ACTIVATION_REQUEST, payload)
         ptype, payload = self._recv_doip()
 
