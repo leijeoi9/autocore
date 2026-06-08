@@ -254,6 +254,32 @@ void isotp_poll(void)
         tx_state = ISO_TP_TX_IDLE;
     }
 
+    /* ========== SENDING_CF 状态：继续发送连续帧 ========== */
+    if (tx_state == ISO_TP_TX_SENDING_CF) {
+        struct can_frame cf_frame;
+        uint32_t remaining = tx_total_len - tx_sent;
+        uint32_t cf_len = (remaining > ISO_TP_CF_DATA_LEN)
+                          ? ISO_TP_CF_DATA_LEN : remaining;
+
+        build_cf(&cf_frame, tx_id, tx_seq,
+                  tx_buffer + tx_sent, cf_len);
+        can_send(g_fd, &cf_frame);
+
+        printf("[ISO_TP] TX CF: seq=%d, len=%lu, remaining=%lu\n",
+               tx_seq, (unsigned long)cf_len, (unsigned long)remaining);
+
+        tx_sent += cf_len;
+
+        if (tx_sent >= tx_total_len) {
+            tx_state = ISO_TP_TX_IDLE;
+            printf("[ISO_TP] TX complete: id=0x%X, total=%lu\n",
+                   tx_id, (unsigned long)tx_total_len);
+        } else {
+            tx_seq = (tx_seq + 1) & 0x0F;
+            tx_timeout_ms = get_time_ms() + ISO_TP_DEFAULT_TIMEOUT;
+        }
+    }
+
     /* ========== 检查接收超时 ========== */
     if (rx_state != ISO_TP_RX_IDLE && now > rx_timeout_ms) {
         printf("[ISO_TP] RX timeout! (expected seq=%d, got %lu/%lu bytes)\n",
@@ -375,14 +401,10 @@ void isotp_poll(void)
             break;
         }
 
-        /* 收到 FC 确认，开始发连续帧直到发完 */
-        tx_state = ISO_TP_TX_SENDING_CF;
+        /* 收到 FC 确认，连续发送所有 CF 直到发完 */
         tx_timeout_ms = get_time_ms() + ISO_TP_DEFAULT_TIMEOUT;
 
-        /* fall through: 立即发送第一个 CF */
-        /* (无 break，直接进入 CF 发送逻辑) */
-        /* 但用 goto 或循环更清晰，此处直接发送一帧 */
-        {
+        while (tx_sent < tx_total_len) {
             struct can_frame cf_frame;
             uint32_t remaining = tx_total_len - tx_sent;
             uint32_t cf_len = (remaining > ISO_TP_CF_DATA_LEN)
@@ -398,12 +420,10 @@ void isotp_poll(void)
             tx_sent += cf_len;
 
             if (tx_sent >= tx_total_len) {
-                /* 发完了 */
                 tx_state = ISO_TP_TX_IDLE;
                 printf("[ISO_TP] TX complete: id=0x%X, total=%lu\n",
                        tx_id, (unsigned long)tx_total_len);
             } else {
-                /* 还有要发的 */
                 tx_seq = (tx_seq + 1) & 0x0F;
                 tx_state = ISO_TP_TX_SENDING_CF;
                 tx_timeout_ms = get_time_ms() + ISO_TP_DEFAULT_TIMEOUT;
@@ -442,6 +462,32 @@ void isotp_rx_frame(const struct can_frame *frame)
     if (tx_state != ISO_TP_TX_IDLE && now > tx_timeout_ms) {
         printf("[ISO_TP] TX timeout!\n");
         tx_state = ISO_TP_TX_IDLE;
+    }
+
+    /* ========== SENDING_CF 状态：继续发送连续帧 ========== */
+    if (tx_state == ISO_TP_TX_SENDING_CF) {
+        struct can_frame cf_frame;
+        uint32_t remaining = tx_total_len - tx_sent;
+        uint32_t cf_len = (remaining > ISO_TP_CF_DATA_LEN)
+                          ? ISO_TP_CF_DATA_LEN : remaining;
+
+        build_cf(&cf_frame, tx_id, tx_seq,
+                  tx_buffer + tx_sent, cf_len);
+        can_send(g_fd, &cf_frame);
+
+        printf("[ISO_TP] TX CF: seq=%d, len=%lu, remaining=%lu\n",
+               tx_seq, (unsigned long)cf_len, (unsigned long)remaining);
+
+        tx_sent += cf_len;
+
+        if (tx_sent >= tx_total_len) {
+            tx_state = ISO_TP_TX_IDLE;
+            printf("[ISO_TP] TX complete: id=0x%X, total=%lu\n",
+                   tx_id, (unsigned long)tx_total_len);
+        } else {
+            tx_seq = (tx_seq + 1) & 0x0F;
+            tx_timeout_ms = get_time_ms() + ISO_TP_DEFAULT_TIMEOUT;
+        }
     }
 
     /* 检查接收超时 */
@@ -529,9 +575,8 @@ void isotp_rx_frame(const struct can_frame *frame)
             tx_state = ISO_TP_TX_IDLE;
             break;
         }
-        tx_state = ISO_TP_TX_SENDING_CF;
         tx_timeout_ms = get_time_ms() + ISO_TP_DEFAULT_TIMEOUT;
-        {
+        while (tx_sent < tx_total_len) {
             struct can_frame cf_frame;
             uint32_t remaining = tx_total_len - tx_sent;
             uint32_t cf_len = (remaining > ISO_TP_CF_DATA_LEN)
