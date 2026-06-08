@@ -7,6 +7,8 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>      /* getenv */
+#include <unistd.h>      /* access */
 #include <linux/can.h>
 
 /* ==================== 内部状态 ==================== */
@@ -14,15 +16,46 @@
 /** CAN socket 文件描述符 */
 static int rte_can_fd = -1;
 
-/** CAN 网络接口名称（可通过配置修改） */
-static const char *rte_can_ifname = "vcan0";
+/**
+ * CAN 网络接口名称
+ *
+ * 优先使用环境变量 CAN_IF，默认 vcan0（PC 开发）或 can0（板上部署）。
+ * 用法:
+ *   CAN_IF=vcan0 ./can_service    # PC 上用 vcan
+ *   CAN_IF=can0  ./can_service    # 板上用真实 CAN
+ */
+static const char *rte_can_ifname = NULL;
+
+/** 解析 CAN 接口名称（线程安全的一次性初始化） */
+static const char *rte_get_can_ifname(void)
+{
+    if (rte_can_ifname)
+        return rte_can_ifname;
+
+    const char *env = getenv("CAN_IF");
+    if (env && env[0] != '\0') {
+        rte_can_ifname = env;
+    } else {
+        /* 默认: 检查 /sys/class/net/can0 是否存在，存在就用 can0 */
+        if (access("/sys/class/net/can0", F_OK) == 0)
+            rte_can_ifname = "can0";
+        else
+            rte_can_ifname = "vcan0";
+    }
+
+    printf("[RTE] CAN interface: %s (override with CAN_IF env var)\n",
+           rte_can_ifname);
+    return rte_can_ifname;
+}
 
 /* ==================== 系统接口实现 ==================== */
 
 int Rte_Init(void)
 {
+    const char *ifname = rte_get_can_ifname();
+
     /* Step 1: 打开 CAN 设备（MCAL 层） */
-    rte_can_fd = can_open(rte_can_ifname);
+    rte_can_fd = can_open(ifname);
     if (rte_can_fd < 0) {
         printf("[RTE] WARN: can_open(%s) failed — CAN disabled, other services (DoIP) still available\n", rte_can_ifname);
         /* 不返回错误，让 RTE 继续初始化，DoIP 等其他服务仍可用 */

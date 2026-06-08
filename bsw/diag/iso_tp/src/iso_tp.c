@@ -422,3 +422,141 @@ int isotp_tx_idle(void)
 {
     return (tx_state == ISO_TP_TX_IDLE) ? 1 : 0;
 }
+
+/**
+ * 从外部送入一帧 CAN 数据供 ISO-TP 处理
+ *
+ * 当 RTE/CanIf 已经通过 can_recv 收到了一帧 CAN 数据，
+ * 并且识别出这是诊断报文 ID 时，调用此函数将帧交给 ISO-TP。
+ * 这样避免了多个模块同时 poll 同一个 fd 导致数据丢失。
+ */
+void isotp_rx_frame(const struct can_frame *frame)
+{
+    if (!frame || g_fd < 0)
+        return;
+
+    uint8_t pci_type = get_pci_type(frame->data[0]);
+    long long now = get_time_ms();
+
+    /* 检查发送超时（对于 FC 帧，发送方需要） */
+    if (tx_state != ISO_TP_TX_IDLE && now > tx_timeout_ms) {
+        printf("[ISO_TP] TX timeout!\n");
+        tx_state = ISO_TP_TX_IDLE;
+    }
+
+    /* 检查接收超时 */
+    if (rx_state != ISO_TP_RX_IDLE && now > rx_timeout_ms) {
+        printf("[ISO_TP] RX timeout! (expected seq=%d, got %lu/%lu bytes)\n",
+               rx_exp_seq, (unsigned long)rx_received,
+               (unsigned long)rx_total_len);
+        rx_state = ISO_TP_RX_IDLE;
+        rx_total_len = 0;
+    }
+
+    switch (pci_type) {
+
+    case ISO_TP_PCI_SF: {
+        uint32_t sf_len = frame->data[0] & 0x0F;
+        if (sf_len > ISO_TP_SF_MAX_LEN)
+            break;
+        rx_id = frame->can_id;
+        memcpy(rx_buffer, &frame->data[1], sf_len);
+        rx_total_len = sf_len;
+        printf("[ISO_TP] RX SF: id=0x%X, len=%lu\n",
+               frame->can_id, (unsigned long)sf_len);
+        break;
+    }
+
+    case ISO_TP_PCI_FF: {
+        uint32_t ff_len = get_frame_length(frame);
+        if (ff_len > ISO_TP_MAX_LEN) {
+            printf("[ISO_TP] RX FF: length too large: %lu\n",
+                   (unsigned long)ff_len);
+            break;
+        }
+        rx_id = frame->can_id;
+        rx_total_len = ff_len;
+        memcpy(rx_buffer, &frame->data[2], ISO_TP_FF_DATA_LEN);
+        rx_received = ISO_TP_FF_DATA_LEN;
+        rx_exp_seq = 1;
+        rx_state = ISO_TP_RX_WAITING_CF;
+        /* 发送流控帧 */
+        struct can_frame fc_frame;
+        build_fc(&fc_frame, frame->can_id, ISO_TP_FC_CTS, 0, 10);
+        can_send(g_fd, &fc_frame);
+        rx_timeout_ms = get_time_ms() + ISO_TP_DEFAULT_TIMEOUT;
+        printf("[ISO_TP] RX FF: id=0x%X, total=%lu, rx=%lu\n",
+               frame->can_id, (unsigned long)ff_len,
+               (unsigned long)rx_received);
+        break;
+    }
+
+    case ISO_TP_PCI_CF: {
+        if (rx_state != ISO_TP_RX_WAITING_CF)
+            break;
+        uint8_t seq = frame->data[0] & 0x0F;
+        if (seq != rx_exp_seq) {
+            printf("[ISO_TP] RX CF: seq mismatch (expect %d, got %d)\n",
+                   rx_exp_seq, seq);
+            rx_state = ISO_TP_RX_IDLE;
+            rx_total_len = 0;
+            break;
+        }
+        uint32_t cf_len = frame->can_dlc - 1;
+        uint32_t remaining = rx_total_len - rx_received;
+        if (cf_len > remaining) cf_len = remaining;
+        memcpy(rx_buffer + rx_received, &frame->data[1], cf_len);
+        rx_received += cf_len;
+        rx_exp_seq = (seq + 1) & 0x0F;
+        rx_timeout_ms = get_time_ms() + ISO_TP_DEFAULT_TIMEOUT;
+        printf("[ISO_TP] RX CF: seq=%d, cf_len=%lu, total_rx=%lu/%lu\n",
+               seq, (unsigned long)cf_len,
+               (unsigned long)rx_received, (unsigned long)rx_total_len);
+        if (rx_received >= rx_total_len) {
+            printf("[ISO_TP] RX complete: id=0x%X, len=%lu\n",
+                   rx_id, (unsigned long)rx_total_len);
+            rx_state = ISO_TP_RX_IDLE;
+        }
+        break;
+    }
+
+    case ISO_TP_PCI_FC: {
+        if (tx_state != ISO_TP_TX_WAIT_FC)
+            break;
+        uint8_t fc_status = frame->data[0] & 0x0F;
+        if (fc_status != ISO_TP_FC_CTS) {
+            printf("[ISO_TP] TX FC: unexpected status=%d, abort\n", fc_status);
+            tx_state = ISO_TP_TX_IDLE;
+            break;
+        }
+        tx_state = ISO_TP_TX_SENDING_CF;
+        tx_timeout_ms = get_time_ms() + ISO_TP_DEFAULT_TIMEOUT;
+        {
+            struct can_frame cf_frame;
+            uint32_t remaining = tx_total_len - tx_sent;
+            uint32_t cf_len = (remaining > ISO_TP_CF_DATA_LEN)
+                              ? ISO_TP_CF_DATA_LEN : remaining;
+            build_cf(&cf_frame, tx_id, tx_seq,
+                      tx_buffer + tx_sent, cf_len);
+            can_send(g_fd, &cf_frame);
+            printf("[ISO_TP] TX CF: seq=%d, len=%lu, remaining=%lu\n",
+                   tx_seq, (unsigned long)cf_len, (unsigned long)remaining);
+            tx_sent += cf_len;
+            if (tx_sent >= tx_total_len) {
+                tx_state = ISO_TP_TX_IDLE;
+                printf("[ISO_TP] TX complete: id=0x%X, total=%lu\n",
+                       tx_id, (unsigned long)tx_total_len);
+            } else {
+                tx_seq = (tx_seq + 1) & 0x0F;
+                tx_state = ISO_TP_TX_SENDING_CF;
+                tx_timeout_ms = get_time_ms() + ISO_TP_DEFAULT_TIMEOUT;
+            }
+        }
+        break;
+    }
+
+    default:
+        printf("[ISO_TP] Unknown PCI type: 0x%02X\n", frame->data[0]);
+        break;
+    }
+}

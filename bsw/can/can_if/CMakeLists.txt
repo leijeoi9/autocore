@@ -12,6 +12,7 @@ add_library(can_if STATIC
 
 target_include_directories(can_if PUBLIC
     include
+    ${CMAKE_SOURCE_DIR}/bsw/diag/iso_tp/include
 )
 
 target_link_libraries(can_if PUBLIC

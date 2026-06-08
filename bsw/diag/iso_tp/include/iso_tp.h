@@ -35,6 +35,7 @@
  */
 
 #include <stdint.h>
+#include <linux/can.h>
 
 /* ==================== 常量定义 ==================== */
 
@@ -130,5 +131,17 @@ void isotp_poll(void);
  * @return 1=空闲可发新报文, 0=正在发送中
  */
 int isotp_tx_idle(void);
+
+/**
+ * @brief 从外部送入一帧 CAN 数据供 ISO-TP 处理
+ *
+ * 当上层（如 RTE/CanIf）已经通过 can_recv 收到了一帧 CAN 数据，
+ * 并且识别出这是诊断报文时，调用此函数将帧交给 ISO-TP 状态机处理。
+ *
+ * 这样避免了多个模块同时 poll 同一个 CAN fd 导致数据丢失的问题。
+ *
+ * @param frame  收到的 CAN 帧
+ */
+void isotp_rx_frame(const struct can_frame *frame);
 
 #endif /* ISO_TP_H */
