@@ -1,73 +1,65 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python2
 """
-简单的文件传输服务器（支持上传和下载）
-在板子上运行，Windows 浏览器访问 http://192.168.1.100:8000
-
-上传：选择文件 → 点击 Upload
-下载：点击文件名
+AutoCore File Server - 支持上传/下载
+用法: python file_server.py
+然后浏览器访问 http://192.168.1.100:8000
 """
-import http.server
-import os
+import SimpleHTTPServer
+import BaseHTTPServer
 import cgi
+import os
 
-UPLOAD_DIR = "/root"
+PORT = 8000
+DIR = "/root"
 
-class FileTransferHandler(http.server.SimpleHTTPRequestHandler):
+class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=UPLOAD_DIR, **kwargs)
+        SimpleHTTPServer.SimpleHTTPRequestHandler.__init__(self, *args, **kwargs)
 
     def do_POST(self):
-        """处理文件上传"""
         form = cgi.FieldStorage(
             fp=self.rfile,
             headers=self.headers,
-            environ={"REQUEST_METHOD": "POST"}
-        )
+            environ={"REQUEST_METHOD": "POST"})
         file_item = form["file"]
         if file_item.filename:
-            # 安全处理文件名
             filename = os.path.basename(file_item.filename)
-            path = os.path.join(UPLOAD_DIR, filename)
+            path = os.path.join(DIR, filename)
             with open(path, "wb") as f:
                 f.write(file_item.file.read())
             self.send_response(200)
-            self.send_header("Content-type", "text/html")
+            self.send_header("Content-type", "text/plain")
             self.end_headers()
-            self.wfile.write(f"OK: {filename} uploaded ({os.path.getsize(path)} bytes)".encode())
+            self.wfile.write("OK: %s (%d bytes)" % (filename, os.path.getsize(path)))
         else:
             self.send_response(400)
             self.end_headers()
-            self.wfile.write(b"No file received")
+            self.wfile.write("No file")
 
     def do_GET(self):
-        """列出文件 + 上传表单"""
         if self.path == "/":
             self.send_response(200)
             self.send_header("Content-type", "text/html")
             self.end_headers()
-            self.wfile.write(b"<html><body>")
-            self.wfile.write(b"<h2>AutoCore File Transfer</h2>")
-            # 上传表单
-            self.wfile.write(b"""
-            <h3>Upload to Board:</h3>
-            <form method="post" enctype="multipart/form-data">
-              <input type="file" name="file">
-              <input type="submit" value="Upload">
-            </form>
-            <hr>
-            <h3>Download from Board:</h3>
-            <ul>
-            """)
-            for f in sorted(os.listdir(UPLOAD_DIR)):
-                if os.path.isfile(os.path.join(UPLOAD_DIR, f)):
-                    size = os.path.getsize(os.path.join(UPLOAD_DIR, f))
-                    self.wfile.write(f'<li><a href="/{f}">{f}</a> ({size} bytes)</li>'.encode())
-            self.wfile.write(b"</ul></body></html>")
+            self.wfile.write("<html><body>")
+            self.wfile.write("<h2>AutoCore File Transfer</h2>")
+            self.wfile.write('<form method="post" enctype="multipart/form-data">')
+            self.wfile.write('<input type="file" name="file">')
+            self.wfile.write('<input type="submit" value="Upload">')
+            self.wfile.write('</form><hr><ul>')
+            for f in sorted(os.listdir(DIR)):
+                path = os.path.join(DIR, f)
+                if os.path.isfile(path):
+                    size = os.path.getsize(path)
+                    self.wfile.write('<li><a href="/%s">%s</a> (%d bytes)</li>' % (f, f, size))
+            self.wfile.write("</ul></body></html>")
         else:
-            super().do_GET()
+            SimpleHTTPServer.SimpleHTTPRequestHandler.do_GET(self)
 
-if __name__ == "__main__":
-    port = 8000
-    print(f"AutoCore File Server on http://0.0.0.0:{port}")
-    print(f"Directory: {UPLOAD_DIR}")
-    http.server.HTTPServer(("0.0.0.0", port), FileTransferHandler).serve_forever()
+    def translate_path(self, path):
+        return os.path.join(DIR, path.lstrip("/"))
+
+httpd = BaseHTTPServer.HTTPServer(("0.0.0.0", PORT), Handler)
+print("AutoCore File Server at http://0.0.0.0:%d" % PORT)
+print("Directory: %s" % DIR)
+httpd.serve_forever()
